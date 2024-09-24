@@ -119,7 +119,7 @@ class APBSPI(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModul
       is(xip_set_ctrl){
         mspi.io.in.psel  :=true.B
         mspi.io.in.paddr :=SPI_BASE + SPI_CTRL
-        mspi.io.in.pwdata:="b000101000000".U
+        mspi.io.in.pwdata:="b1000101000000".U
         //设置charlen和gobsy
         mspi.io.in.pstrb :="b0011".U
         mspi.io.in.pwrite:=true.B
@@ -131,22 +131,31 @@ class APBSPI(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModul
         }
       }
       is(xip_wait_bsy){
-        mspi.io.in.psel  :=true.B
+        mspi.io.in.psel  :=false.B
         mspi.io.in.paddr :=SPI_BASE + SPI_CTRL
         
         mspi.io.in.pstrb :=0.U
         mspi.io.in.pwrite:=false.B
-        //进入轮讯，gobsy为0时切下一个状态机
-        when(mspi.io.in.pready){
-          when(mspi.io.in.prdata(8)===0.U){
-            xipState:=xip_close_ss
-          }.otherwise{
-            xipState:=xip_wait_bsy
-          }
-          mspi_penable:= ~mspi.io.in.pready
-        }.otherwise{
-          mspi_penable:= mspi.io.in.psel
+        mspi_penable:=false.B
+        when(mspi.io.spi_irq_out){
+          xipState:=xip_close_ss
         }
+        // mspi.io.in.psel  :=true.B
+        // mspi.io.in.paddr :=SPI_BASE + SPI_CTRL
+        
+        // mspi.io.in.pstrb :=0.U
+        // mspi.io.in.pwrite:=false.B
+        // //进入轮讯，gobsy为0时切下一个状态机
+        // when(mspi.io.in.pready){
+        //   when(mspi.io.in.prdata(8)===0.U){
+        //     xipState:=xip_close_ss
+        //   }.otherwise{
+        //     xipState:=xip_wait_bsy
+        //   }
+        //   mspi_penable:= ~mspi.io.in.pready
+        // }.otherwise{
+        //   mspi_penable:= mspi.io.in.psel
+        // }
       }
       is(xip_close_ss){
         mspi.io.in.psel  :=true.B
