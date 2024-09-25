@@ -49,7 +49,7 @@ class APBSPI(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModul
     def SPI_CTRL   = "h10".U
     def SPI_DIVIDER= "h14".U
     def SPI_SS     = "h18".U
-    val spi_master_divd = "h9f".U
+    val spi_master_divd = "h01".U
     val mspi = Module(new spi_top_apb)
     mspi.io.clock := clock
     mspi.io.reset := reset
