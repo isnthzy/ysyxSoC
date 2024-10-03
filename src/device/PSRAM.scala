@@ -75,7 +75,7 @@ class psramChisel extends RawModule {
   val di = TriStateInBuf(io.dio, dinValue, dinEn) // change this if you need
 
   // withReset(io.ce_n.asAsyncReset) {
-    val cmd_t :: addr_t :: wdata_t :: rdata_t :: Nil = Enum(4)
+    val cmd_t :: qpicmd_t :: addr_t :: wdata_t :: rdata_t :: Nil = Enum(5)
     val state   = withClockAndReset(( io.sck).asClock, io.ce_n.asAsyncReset)(RegInit(cmd_t))
     val counterCmd = withClockAndReset(( io.sck).asClock, io.ce_n.asAsyncReset)(RegInit(0.U(5.W)))
     val counterAddr= withClockAndReset((~io.sck).asClock, io.ce_n.asAsyncReset)(RegInit(0.U(5.W)))
@@ -87,6 +87,8 @@ class psramChisel extends RawModule {
     val byteDataHigh = withClockAndReset(( io.sck).asClock, io.ce_n.asAsyncReset)(RegInit(0.U(4.W))) //wdata
     val rdataReg  = withClockAndReset(( io.sck).asClock, io.ce_n.asAsyncReset)(RegInit(0.U(32.W)))
     val wdataBuff = withClock((~io.sck).asClock)(Reg(new psramWriteBuffBundle()))
+    val qpi_mode_cmd = withClock((~io.sck).asClock)(Reg(UInt(8.W)))
+    val qpi_mode = qpi_mode_cmd === 0x35.U
     val wen = io.ce_n && wdataBuff.isWr
     val ren = (state === rdata_t) && (counterAddr === 24.U) //读数据
     val psramRAM = Module(new psramRAM)
@@ -99,7 +101,11 @@ class psramChisel extends RawModule {
       switch(state){
         is(cmd_t){
           counterCmd := counterCmd + 1.U
-          cmd := Cat(cmd(6,0), di(0))
+          when(qpi_mode){
+            cmd := Cat(cmd(3,0), di(3,0))
+          }.otherwise{
+            cmd := Cat(cmd(6,0), di(0))
+          }
         }
         is(wdata_t){
           counterWData := counterWData + 1.U
@@ -121,7 +127,14 @@ class psramChisel extends RawModule {
       wdataBuff.wlen  := counterWData >> 1
       switch(state){
         is(cmd_t){
-          when(counterCmd === 7.U){
+          when(counterCmd >= 7.U && ~qpi_mode){
+            when(cmd === 0x35.U){
+              qpi_mode_cmd := 0x35.U
+              counterCmd := 0.U
+            }.otherwise{
+              state := addr_t
+            }
+          }.elsewhen(counterCmd === 1.U && qpi_mode){
             state := addr_t
           }
         }

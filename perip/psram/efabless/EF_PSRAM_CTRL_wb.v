@@ -39,14 +39,17 @@ module EF_PSRAM_CTRL_wb (
     output  wire [3:0]      douten
 );
 
-    localparam  ST_IDLE = 1'b0,
-                ST_WAIT = 1'b1;
+    localparam  ST_IDLE = 2'b00,
+                ST_WAIT = 2'b01,
+                ST_QPI  = 2'b10,
+                ST_WAIT_QPI = 2'b11;
 
     wire        mr_sck;
     wire        mr_ce_n;
     wire [3:0]  mr_din;
     wire [3:0]  mr_dout;
     wire        mr_doe;
+    wire [31:0] mr_dat_o;
 
     wire        mw_sck;
     wire        mw_ce_n;
@@ -60,16 +63,38 @@ module EF_PSRAM_CTRL_wb (
     wire        mw_wr;
     wire        mw_done;
 
+    wire        qpi_mode;
+
+    wire        mr_qpi_done;
+    wire        mr_qpi_sck;
+    wire        mr_qpi_ce_n;
+    wire [3:0]  mr_qpi_dout;
+    wire        mr_qpi_doe;
+    wire [31:0] qpi_dat_o;
+
+    wire        mw_qpi_done;
+    wire        mw_qpi_sck;
+    wire        mw_qpi_ce_n;
+    wire [3:0]  mw_qpi_dout;
+    wire        mw_qpi_doe;
     //wire        doe;
+    wire        qpi_mode;
+    wire        open_qpi;
+    wire        open_qpi_done;
+    wire        open_qpi_sck;  
+    wire        open_qpi_ce_n;
+    wire [3:0]  open_qpi_dout;
+    wire        open_qpi_doe;
 
     // WB Control Signals
     wire        wb_valid        =   cyc_i & stb_i;
-    wire        wb_we           =   we_i & wb_valid;
-    wire        wb_re           =   ~we_i & wb_valid;
+    wire        wb_we           =   we_i  & wb_valid & qpi_mode;
+    wire        wb_re           =   ~we_i & wb_valid & qpi_mode; //NOTE:没打开qpi_mode的时候不允许发起访问
     //wire[3:0]   wb_byte_sel     =   sel_i & {4{wb_we}};
+    wire        open_qpi        =   wb_valid & ~qpi_mode;
 
     // The FSM
-    reg         state, nstate;
+    reg   [1:0]  state, nstate;
     always @ (posedge clk_i or posedge rst_i)
         if(rst_i)
             state <= ST_IDLE;
@@ -80,15 +105,26 @@ module EF_PSRAM_CTRL_wb (
         case(state)
             ST_IDLE :
                 if(wb_valid)
-                    nstate = ST_WAIT;
+                    if(qpi_mode)
+                        nstate = ST_WAIT;
+                    else
+                        nstate = ST_WAIT_QPI;
                 else
                     nstate = ST_IDLE;
 
             ST_WAIT :
-                if((mw_done & wb_we) | (mr_done & wb_re))
+                if(((mw_done | (mw_qpi_done & qpi_mode)) & wb_we) 
+                  |((mr_done | (mr_qpi_done & qpi_mode)) & wb_re))
                     nstate = ST_IDLE;
                 else
                     nstate = ST_WAIT;
+            ST_WAIT_QPI :
+                if(open_qpi_done & wb_valid & qpi_mode)
+                    nstate = ST_IDLE;
+                else 
+                    nstate = ST_WAIT_QPI;
+            ST_QPI:
+                nstate = ST_QPI;
         endcase
     end
 
@@ -138,12 +174,28 @@ module EF_PSRAM_CTRL_wb (
         //.size(size), Always read a word
         .size(3'd4),
         .done(mr_done),
-        .line(dat_o),
+        .line(mr_dat_o),
         .sck(mr_sck),
         .ce_n(mr_ce_n),
         .din(mr_din),
         .dout(mr_dout),
         .douten(mr_doe)
+    );
+
+    PSRAM_READER_QPI MR_QPI (
+        .clk(clk_i),
+        .rst_n(~rst_i),
+        .addr({adr_i[23:2],2'b0}),
+        .rd(mr_rd),
+        //.size(size), Always read a word
+        .size(3'd4),
+        .done(mr_qpi_done),
+        .line(qpi_dat_o),
+        .sck(mr_qpi_sck),
+        .ce_n(mr_qpi_ce_n),
+        .din(mr_din),
+        .dout(mr_qpi_dout),
+        .douten(mr_qpi_doe)
     );
 
     PSRAM_WRITER MW (
@@ -161,12 +213,50 @@ module EF_PSRAM_CTRL_wb (
         .douten(mw_doe)
     );
 
-    assign sck  = wb_we ? mw_sck  : mr_sck;
-    assign ce_n = wb_we ? mw_ce_n : mr_ce_n;
-    assign dout = wb_we ? mw_dout : mr_dout;
-    assign douten  = wb_we ? {4{mw_doe}}  : {4{mr_doe}};
+    PSRAM_WRITER_QPI MW_QPI (
+        .clk(clk_i),
+        .rst_n(~rst_i),
+        .addr({adr_i[23:0]}),
+        .wr(mw_wr),
+        .size(size),
+        .done(mw_qpi_done),
+        .line(wdata),
+        .sck(mw_qpi_sck),
+        .ce_n(mw_qpi_ce_n),
+        .din(mw_din),
+        .dout(mw_qpi_dout),
+        .douten(mw_qpi_doe)
+    );
+
+    QPI_MODE QPI_MODE (
+        .clk(clk_i),
+        .rst_n(~rst_i),
+        .open_qpi(open_qpi),
+        .done(open_qpi_done),
+        .qpi_mode(qpi_mode),
+
+        .sck(open_qpi_sck),
+        .ce_n(open_qpi_ce_n),
+        .dout(open_qpi_dout),
+        .douten(open_qpi_doe)
+    );
+
+    assign sck  = open_qpi ? open_qpi_sck :
+                  qpi_mode ? (wb_we ? mw_qpi_sck  : mr_qpi_sck):
+                             (wb_we ? mw_sck      : mr_sck);
+    assign ce_n = open_qpi ? open_qpi_ce_n :
+                  qpi_mode ? (wb_we ? mw_qpi_ce_n : mr_qpi_ce_n):
+                             (wb_we ? mw_ce_n     : mr_ce_n);
+    assign dout = open_qpi ? open_qpi_dout :
+                  qpi_mode ? (wb_we ? mw_qpi_dout : mr_qpi_dout) :
+                             (wb_we ? mw_dout     : mr_dout);
+    assign douten  = open_qpi ? {4{open_qpi_doe}} :
+                     qpi_mode ? (wb_we ? {4{mw_qpi_doe}}  : {4{mr_qpi_doe}}) :
+                                (wb_we ? {4{mw_doe}}      : {4{mr_doe}});
+    assign dat_o = qpi_mode ? qpi_dat_o : mr_dat_o;
 
     assign mw_din = din;
     assign mr_din = din;
-    assign ack_o = wb_we ? mw_done :mr_done ;
+    assign ack_o = qpi_mode ? (wb_we ? mw_qpi_done : mr_qpi_done) :
+                              (wb_we ? mw_done     : mr_done) ;
 endmodule
