@@ -113,8 +113,8 @@ module EF_PSRAM_CTRL_wb (
                     nstate = ST_IDLE;
 
             ST_WAIT :
-                if(((mw_done | (mw_qpi_done & qpi_mode)) & wb_we) 
-                  |((mr_done | (mr_qpi_done & qpi_mode)) & wb_re))
+                if((((mw_done& ~qpi_mode) | (mw_qpi_done & qpi_mode)) & wb_we) 
+                  |(((mr_done& ~qpi_mode) | (mr_qpi_done & qpi_mode)) & wb_re))
                     nstate = ST_IDLE;
                 else
                     nstate = ST_WAIT;
