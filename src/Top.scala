@@ -21,6 +21,6 @@ class ysyxSoCTop extends Module {
 }
 
 object Elaborate extends App {
-  val firtoolOptions = Array("--disable-annotation-unknown")
+  val firtoolOptions = Array("--disable-annotation-unknown","--preserve-aggregate=vec")
   circt.stage.ChiselStage.emitSystemVerilogFile(new ysyxSoCTop, args, firtoolOptions)
 }
