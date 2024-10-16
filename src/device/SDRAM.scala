@@ -19,7 +19,22 @@ class SDRAMIO extends Bundle {
   val we  = Output(Bool())
   val a   = Output(UInt(13.W))
   val ba  = Output(UInt(2.W))
-  val dqm = Output(UInt(2.W))
+  val dqm = Output(UInt(4.W))
+  val dq0 = Analog(16.W)
+  val dq1 = Analog(16.W)
+}
+
+class SDRAMPARTIO extends Bundle {
+  val clk = Output(Bool())
+  val cke = Output(Bool())
+  val num = Output(Bool())
+  val cs  = Output(Bool())
+  val ras = Output(Bool())
+  val cas = Output(Bool())
+  val we  = Output(Bool())
+  val a   = Output(UInt(13.W))
+  val ba  = Output(UInt(2.W))
+  val dqm = Output(UInt(4.W))
   val dq  = Analog(16.W)
 }
 
@@ -83,7 +98,7 @@ class sdramRAM extends BlackBox with HasBlackBoxInline {
       |    output reg [15:0]  dout
       |);
       |wire [7:0] real_bank;
-      |assign real_bank = bank + {{7{1'b0}}, num} << 2; 
+      |assign real_bank = bank + ({{7{1'b0}}, num} << 2); 
       |always@(posedge clock) begin
       |  if(valid) begin
       |    if(wr) begin
@@ -98,8 +113,8 @@ class sdramRAM extends BlackBox with HasBlackBoxInline {
     """.stripMargin)
 }
 
-class sdramChisel extends RawModule {
-  val io = IO(Flipped(new SDRAMIO))
+class sdramPart extends RawModule{
+  val io = IO(Flipped(new SDRAMPARTIO))
   /*NOTE:实现SDRAM控制器会发送的命令
   其中PRECHARGE和AUTO REFRESH命令与存储单元的电气特性相关,可以将其实现成NOP.
   此外, Mode寄存器只需要实现CAS Latency和Burst Length
@@ -146,7 +161,7 @@ class sdramChisel extends RawModule {
     val isActive = command.active
     val isburstTerminate = command.burstTerminate
     val sdramRAM = Module(new sdramRAM)
-    sdramRAM.io.num := 0.U
+    sdramRAM.io.num := io.num
 
     val ModeRegister = RegInit(0.U.asTypeOf(new sdramOpModeBundle))
     when(isLoadModeRegister){
@@ -176,7 +191,6 @@ class sdramChisel extends RawModule {
     sdramRAM.io.bank := bankBuff
     sdramRAM.io.din  := wdataBuff
     sdramRAM.io.dqm  := dqmBuff
-    
 
     switch(state){
       is(s_idle){
@@ -247,6 +261,37 @@ class sdramChisel extends RawModule {
       }
     }
   }
+}
+
+class sdramChisel extends RawModule { 
+  val io=IO(Flipped(new SDRAMIO))
+  val sdramPart = Array.fill(2){Module(new sdramPart).io}
+  sdramPart(0).num := 0.U
+  sdramPart(1).num := 1.U
+
+  sdramPart(0).clk <> io.clk
+  sdramPart(0).cke <> io.cke
+  sdramPart(0).cs  <> io.cs
+  sdramPart(0).ras <> io.ras
+  sdramPart(0).cas <> io.cas
+  sdramPart(0).we  <> io.we
+  sdramPart(0).a   <> io.a
+  sdramPart(0).ba  <> io.ba
+  sdramPart(1).clk <> io.clk
+  sdramPart(1).cke <> io.cke
+  sdramPart(1).cs  <> io.cs
+  sdramPart(1).ras <> io.ras
+  sdramPart(1).cas <> io.cas
+  sdramPart(1).we  <> io.we
+  sdramPart(1).a   <> io.a
+  sdramPart(1).ba  <> io.ba
+
+  sdramPart(0).dqm <> io.dqm(1,0)
+  sdramPart(1).dqm <> io.dqm(3,2) 
+
+  sdramPart(0).dq  <> io.dq0
+  sdramPart(1).dq  <> io.dq1
+
 
 }
 

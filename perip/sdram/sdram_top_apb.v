@@ -20,13 +20,15 @@ module sdram_top_apb (
   output        sdram_we,
   output [12:0] sdram_a,
   output [ 1:0] sdram_ba,
-  output [ 1:0] sdram_dqm,
-  inout  [15:0] sdram_dq
+  output [ 3:0] sdram_dqm,
+  inout  [15:0] sdram_dq0,
+  inout  [15:0] sdram_dq1
 );
 
   wire sdram_dout_en;
-  wire [15:0] sdram_dout;
-  assign sdram_dq = sdram_dout_en ? sdram_dout : 16'bz;
+  wire [31:0] sdram_dout;
+  assign sdram_dq0 = sdram_dout_en ? sdram_dout[15: 0] : 16'bz;
+  assign sdram_dq1 = sdram_dout_en ? sdram_dout[31:16] : 16'bz;
 
   typedef enum [1:0] { ST_IDLE, ST_WAIT_ACCEPT, ST_WAIT_ACK } state_t;
   reg [1:0] state;
@@ -72,7 +74,8 @@ module sdram_top_apb (
     .sdram_dqm_o(sdram_dqm),
     .sdram_addr_o(sdram_a),
     .sdram_ba_o(sdram_ba),
-    .sdram_data_input_i(sdram_dq),
+    .sdram_data_input0_i(sdram_dq0),
+    .sdram_data_input1_i(sdram_dq1),
     .sdram_data_output_o(sdram_dout),
     .sdram_data_out_en_o(sdram_dout_en)
   );

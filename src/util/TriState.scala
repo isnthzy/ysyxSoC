@@ -36,3 +36,4 @@ object TriStateInBuf {
     buf.io.din
   }
 }
+
