@@ -188,6 +188,8 @@ u_core
     ,.sdram_data_out_en_o(sdram_data_out_en_o)
     ,.sdram_data_input0_i(sdram_data_input_i)
     ,.sdram_data_input1_i(sdram_data_input_i)
+    ,.sdram_data_input2_i(sdram_data_input_i)
+    ,.sdram_data_input3_i(sdram_data_input_i)
 );
 
 

@@ -13,21 +13,23 @@ import freechips.rocketchip.util._
 class SDRAMIO extends Bundle {
   val clk = Output(Bool())
   val cke = Output(Bool())
-  val cs  = Output(Bool())
+  val cs  = Output(UInt(2.W))
   val ras = Output(Bool())
   val cas = Output(Bool())
   val we  = Output(Bool())
-  val a   = Output(UInt(13.W))
+  val a   = Output(UInt(14.W))
   val ba  = Output(UInt(2.W))
   val dqm = Output(UInt(4.W))
   val dq0 = Analog(16.W)
   val dq1 = Analog(16.W)
+  val dq2 = Analog(16.W)
+  val dq3 = Analog(16.W)
 }
 
 class SDRAMPARTIO extends Bundle {
   val clk = Output(Bool())
   val cke = Output(Bool())
-  val num = Output(Bool())
+  val num = Output(UInt(2.W))
   val cs  = Output(Bool())
   val ras = Output(Bool())
   val cas = Output(Bool())
@@ -77,7 +79,7 @@ class sdramRAM extends BlackBox with HasBlackBoxInline {
     val row   = Input(UInt(16.W))
     val col   = Input(UInt(16.W))
     val bank  = Input(UInt(8.W))
-    val num   = Input(Bool())
+    val num   = Input(UInt(2.W))
     val dqm   = Input(UInt(8.W))
     val din   = Input(UInt(16.W))
     val dout  = Output(UInt(16.W))
@@ -92,13 +94,13 @@ class sdramRAM extends BlackBox with HasBlackBoxInline {
       |    input      [15:0]  row,
       |    input      [15:0]  col,
       |    input      [ 7:0]  bank,
-      |    input              num, //颗粒号
+      |    input      [ 1:0]  num, //颗粒号
       |    input      [ 7:0]  dqm,
       |    input      [15:0]  din,
       |    output reg [15:0]  dout
       |);
       |wire [7:0] real_bank;
-      |assign real_bank = bank + ({{7{1'b0}}, num} << 2); 
+      |assign real_bank = bank + ({{6{1'b0}}, num} << 2); 
       |always@(posedge clock) begin
       |  if(valid) begin
       |    if(wr) begin
@@ -146,14 +148,14 @@ class sdramPart extends RawModule{
     val dqi = TriStateInBuf(io.dq, dqinValue, dqinEn) // change this if you need
 
     command.inhibit := io.cs
-    command.nop     := io.ras && io.cas && io.we
-    command.active  := !io.ras && io.cas && io.we
-    command.read    := io.ras && !io.cas && io.we
-    command.write   := io.ras && !io.cas && !io.we 
-    command.burstTerminate   := !io.ras && !io.cas && io.we
-    command.precharge        :=  io.ras && !io.cas && io.we
-    command.autoRefresh      := !io.ras && !io.cas && io.we
-    command.loadModeRegister := !io.ras && !io.cas && !io.we
+    command.nop     := ~io.cs &&  io.ras && io.cas && io.we
+    command.active  := ~io.cs && !io.ras && io.cas && io.we
+    command.read    := ~io.cs &&  io.ras && !io.cas && io.we
+    command.write   := ~io.cs &&  io.ras && !io.cas && !io.we 
+    command.burstTerminate   := ~io.cs && !io.ras && !io.cas && io.we
+    command.precharge        := ~io.cs &&  io.ras && !io.cas && io.we
+    command.autoRefresh      := ~io.cs && !io.ras && !io.cas && io.we
+    command.loadModeRegister := ~io.cs && !io.ras && !io.cas && !io.we
     val isNop = command.nop || command.inhibit || command.precharge || command.autoRefresh
     val isLoadModeRegister = command.loadModeRegister
     val isRead   = command.read
@@ -265,34 +267,31 @@ class sdramPart extends RawModule{
 
 class sdramChisel extends RawModule { 
   val io=IO(Flipped(new SDRAMIO))
-  val sdramPart = Array.fill(2){Module(new sdramPart).io}
-  sdramPart(0).num := 0.U
-  sdramPart(1).num := 1.U
-
-  sdramPart(0).clk <> io.clk
-  sdramPart(0).cke <> io.cke
-  sdramPart(0).cs  <> io.cs
-  sdramPart(0).ras <> io.ras
-  sdramPart(0).cas <> io.cas
-  sdramPart(0).we  <> io.we
-  sdramPart(0).a   <> io.a
-  sdramPart(0).ba  <> io.ba
-  sdramPart(1).clk <> io.clk
-  sdramPart(1).cke <> io.cke
-  sdramPart(1).cs  <> io.cs
-  sdramPart(1).ras <> io.ras
-  sdramPart(1).cas <> io.cas
-  sdramPart(1).we  <> io.we
-  sdramPart(1).a   <> io.a
-  sdramPart(1).ba  <> io.ba
-
-  sdramPart(0).dqm <> io.dqm(1,0)
-  sdramPart(1).dqm <> io.dqm(3,2) 
+  val sdramPart = Array.fill(4){Module(new sdramPart).io}
+  for(i <- 0 until 4){
+    sdramPart(i).num := i.U
+    sdramPart(i).clk <> io.clk
+    sdramPart(i).cke <> io.cke
+    sdramPart(i).ras <> io.ras
+    sdramPart(i).cas <> io.cas
+    sdramPart(i).we  <> io.we
+    sdramPart(i).a   <> io.a
+    sdramPart(i).ba  <> io.ba
+    if(i % 2 == 0){
+      sdramPart(i).dqm <> io.dqm(1,0)
+    }else{
+      sdramPart(i).dqm <> io.dqm(3,2) 
+    }
+  }
+  sdramPart(0).cs := io.cs(0)
+  sdramPart(1).cs := io.cs(0)
+  sdramPart(2).cs := io.cs(1)
+  sdramPart(3).cs := io.cs(1)
 
   sdramPart(0).dq  <> io.dq0
   sdramPart(1).dq  <> io.dq1
-
-
+  sdramPart(2).dq  <> io.dq2
+  sdramPart(3).dq  <> io.dq3
 }
 
 class AXI4SDRAM(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModule {
