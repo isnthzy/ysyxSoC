@@ -20,9 +20,43 @@ class apb_delayer extends BlackBox {
   val io = IO(new APBDelayerIO)
 }
 
-class APBDelayerChisel extends Module {
+class APBDelayerChisel(val params: APBBundleParameters) extends Module {
   val io = IO(new APBDelayerIO)
-  io.out <> io.in
+  def R = 5.U
+  val rCnt = RegInit(0.U(32.W))
+  val respBuff = RegInit(0.U.asTypeOf(new Bundle {
+    val pready    = Bool()
+    val pslverr   = Bool()
+    val prdata    = UInt(params.dataBits.W)
+  }))
+  when(io.in.psel && io.in.penable && io.out.pready) {
+    respBuff.pready := io.out.pready
+    respBuff.pslverr := io.out.pslverr
+    respBuff.prdata := io.out.prdata
+  }
+  io.in.pready  := false.B
+  io.in.pslverr := 0.U
+  io.in.prdata  := 0.U
+  when(io.in.psel && io.in.penable) {
+    when(respBuff.pready) {
+      rCnt := rCnt - 1.U
+    }.otherwise{
+      rCnt := rCnt + R
+    }
+    when(rCnt === 0.U) {
+      io.in.pready  := respBuff.pready
+      io.in.pslverr := respBuff.pslverr
+      io.in.prdata  := respBuff.prdata
+      respBuff := 0.U.asTypeOf(respBuff)
+    }
+  }
+  io.out.psel := io.in.psel
+  io.out.penable := io.in.penable
+  io.out.pwrite := io.in.pwrite
+  io.out.paddr := io.in.paddr
+  io.out.pprot := io.in.pprot
+  io.out.pstrb := io.in.pstrb
+  io.out.pwdata := io.in.pwdata
 }
 
 class APBDelayerWrapper(implicit p: Parameters) extends LazyModule {
@@ -31,7 +65,7 @@ class APBDelayerWrapper(implicit p: Parameters) extends LazyModule {
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
     (node.in zip node.out) foreach { case ((in, edgeIn), (out, edgeOut)) =>
-      val delayer = Module(new apb_delayer)
+      val delayer = Module(new APBDelayerChisel(APBBundleParameters(addrBits = 32, dataBits = 32)))
       delayer.io.clock := clock
       delayer.io.reset := reset
       delayer.io.in <> in
