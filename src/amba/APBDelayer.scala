@@ -50,9 +50,9 @@ class APBDelayerChisel(val params: APBBundleParameters) extends Module {
       respBuff := 0.U.asTypeOf(respBuff)
     }
   }
-  io.out.psel := io.in.psel
-  io.out.penable := io.in.penable
-  io.out.pwrite := io.in.pwrite
+  io.out.psel    := Mux(respBuff.pready,false.B,io.in.psel)
+  io.out.penable := Mux(respBuff.pready,false.B,io.in.penable)
+  io.out.pwrite  := Mux(respBuff.pready,false.B,io.in.pwrite)
   io.out.paddr := io.in.paddr
   io.out.pprot := io.in.pprot
   io.out.pstrb := io.in.pstrb
