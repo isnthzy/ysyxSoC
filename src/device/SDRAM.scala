@@ -131,6 +131,7 @@ class sdramPart extends RawModule{
   0	  0	    0	    1	  AUTO REFRESH	NOP
   0	  0	    0	    0 	LOAD MODE REGISTER	设置Mode寄存器
   */
+  def MAX_CAS = 8
   val command = Wire(new Bundle {
     val inhibit=Bool()
     val nop=Bool()
@@ -166,103 +167,246 @@ class sdramPart extends RawModule{
     sdramRAM.io.num := io.num
 
     val ModeRegister = RegInit(0.U.asTypeOf(new sdramOpModeBundle))
+    val casVisitReg  = RegInit(0.U(3.W))
     when(isLoadModeRegister){
       ModeRegister := io.a(9,0).asTypeOf(new sdramOpModeBundle)
+      casVisitReg  := io.a(9,0).asTypeOf(new sdramOpModeBundle).casLatency - 2.U
     }
     //NOTE: 一个Bank容量为8192 * 512 * 16 bit 又因为16bit分为两个写掩码故拆为 8192 * 512 * 8bit
-
     val rowAddrBuff = RegInit(VecInit(Seq.fill(4)(0.U(13.W))))
-    // val colAddrBuff = RegInit(0.U(12.W)) //行和列buff
-    val bankBuff    = RegInit(0.U(2.W))
-    val wdataBuff   = RegInit(0.U(16.W))
-    val rowDataBuff = RegInit(VecInit(Seq.fill(4)(0.U.asTypeOf(Vec(1024,UInt(8.W))))))
-    val casLatencyCnt = RegInit(0.U(3.W))
-    val burstLengthCnt = RegInit(0.U(3.W))
-    val requestColReg   = RegInit(0.U(9.W))
-    val dqmBuff         = RegInit(0.U(2.W))
-  
-    val (s_idle :: s_active :: s_read :: s_write :: Nil )=Enum(4)
-    val state = RegInit(s_idle)
-    val ReadEn = WireDefault(false.B)
-    val colAddr = WireDefault(0.U(9.W))
+    when(isActive){
+      rowAddrBuff(io.ba) := io.a
+    }
+    val dataQueue  = RegInit(VecInit(Seq.fill(8)(0.U(16.W)))) // 地址缓冲区
+    val validQueue = RegInit(VecInit(Seq.fill(8)(false.B)))   // 地址有效标志队列
+    val nopQueue  = RegInit(VecInit(Seq.fill(8)(false.B)))   // nop队列
+
+    for (i <- MAX_CAS - 1 to 1 by -1) {
+      dataQueue(i)  := dataQueue(i - 1)
+      validQueue(i) := validQueue(i - 1)
+      nopQueue(i)   := nopQueue(i - 1)
+    }
+
     sdramRAM.io.clock := io.clk
-    sdramRAM.io.valid := state === s_write || state === s_read
-    sdramRAM.io.row  := rowAddrBuff(bankBuff)
-    sdramRAM.io.col  := colAddr
-    sdramRAM.io.wr   := state === s_write
-    sdramRAM.io.bank := bankBuff
-    sdramRAM.io.din  := wdataBuff
-    sdramRAM.io.dqm  := dqmBuff
+    sdramRAM.io.valid := isWrite || isRead
+    sdramRAM.io.row  := rowAddrBuff(io.ba)
+    sdramRAM.io.col  := io.a(8,0)
+    sdramRAM.io.wr   := isWrite
+    sdramRAM.io.bank := io.ba
+    sdramRAM.io.din  := dqi
+    sdramRAM.io.dqm  := io.dqm
 
-    switch(state){
+    val (s_idle :: s_read :: Nil ) = Enum(2)
+    val readState = RegInit(s_idle)
+    switch(readState){
       is(s_idle){
-        when(isActive){
-          rowAddrBuff(io.ba) := io.a
-          state := s_active
-        }
         when(isRead){
-          state := s_read
-          requestColReg := io.a(8,0)
-          bankBuff      := io.ba
-          casLatencyCnt := ModeRegister.casLatency - 1.U
-          //NOTE:状态机转换本身会消耗一周期，故casLatencyCnt需要减1
-        }
-        when(isWrite){
-          state := s_write
-          wdataBuff := dqi
-          requestColReg := io.a(8,0)
-          bankBuff      := io.ba
-          dqmBuff       := io.dqm
-        }
-      }
-      is(s_active){
-        // colAddrBuff := io.a(8,0)
-
-        when(isRead){
-          state := s_read
-          requestColReg := io.a(8,0)
-          bankBuff      := io.ba
-          casLatencyCnt := ModeRegister.casLatency - 1.U
-          //NOTE:状态机转换本身会消耗一周期，故casLatencyCnt需要减1
-        }
-        when(isWrite){
-          state := s_write
-          wdataBuff := dqi
-          requestColReg := io.a(8,0)
-          bankBuff      := io.ba
-          dqmBuff       := io.dqm
+          readState := s_read
         }
       }
       is(s_read){
-        //使用移位寄存器来决定读出数据的延迟和顺序
-        when(casLatencyCnt =/= 1.U){
-          casLatencyCnt := casLatencyCnt - 1.U
-        }
-        colAddr := requestColReg + burstLengthCnt
-        when(casLatencyCnt === 1.U && burstLengthCnt <= ModeRegister.burstLength + 1.U){
-          burstLengthCnt := burstLengthCnt + 1.U
-          dqinValue := sdramRAM.io.dout
-          dqinEn := true.B
-        }
-        when(burstLengthCnt === ModeRegister.burstLength + 1.U){ //因为sram性质，访问dpic的结果延迟一拍输出，所以要等延迟一拍的结果
-          burstLengthCnt := 0.U
-          state := s_idle
-        }
-      }
-      is(s_write){
-        when(burstLengthCnt < ModeRegister.burstLength){
-          burstLengthCnt := burstLengthCnt + 1.U
-        }
-        colAddr := requestColReg + burstLengthCnt
-        wdataBuff := dqi
-        dqmBuff   := io.dqm
-        when(burstLengthCnt === ModeRegister.burstLength){
-          burstLengthCnt := 0.U
-          state := s_idle
+        dataQueue(0)  := sdramRAM.io.dout
+        validQueue(0) := true.B
+        nopQueue(0)   := isNop
+        when(isRead){
+          readState := s_read
+        }.otherwise{
+          readState := s_idle
         }
       }
     }
-  }
+
+    val casIdx = casVisitReg // ModeRegister.casLatency - 2.U
+    when(validQueue(casIdx)){
+      validQueue(casIdx) := false.B
+      dqinEn := true.B
+      dqinValue := dataQueue(casIdx)
+    }
+    // when(nopQueue(casIdx - 1.U)){
+
+    // }
+
+    // val colAddr = WireDefault(0.U(9.W))
+
+    // sdramRAM.io.clock := io.clk
+    // sdramRAM.io.valid := isWrite || isRead
+    // sdramRAM.io.row  := rowAddrBuff(io.ba)
+    // sdramRAM.io.col  := io.a(8,0)
+    // sdramRAM.io.wr   := isWrite
+    // sdramRAM.io.bank := io.ba
+    // sdramRAM.io.din  := dqi
+    // sdramRAM.io.dqm  := io.dqm
+
+    // val (s_idle :: s_read :: Nil ) = Enum(2)
+    // val readState = RegInit(s_idle)
+    // val readDataQueue = Module(new Queue(UInt(16.W), 16))
+    // val casLatencyIdx = RegInit(0.U(2.W))
+    // val casLatencyCnt = RegInit(VecInit(Seq.fill(16)(0.U(3.W))))
+    // readDataQueue.io.enq.valid := false.B
+    // switch(readState){
+    //   is(s_idle){
+    //     casLatencyCnt(casLatencyIdx) := ModeRegister.casLatency
+    //     casLatencyIdx := casLatencyIdx + 1.U
+    //     readState := s_read
+    //   }
+    //   is(s_read){
+    //     readDataQueue.io.enq.bits := sdramRAM.io.dout
+    //     readDataQueue.io.enq.valid := true.B
+    //     when(isRead){
+    //       casLatencyIdx := casLatencyIdx + 1.U
+    //       casLatencyCnt(casLatencyIdx) := ModeRegister.casLatency
+    //     }.otherwise{
+    //       when(casLatencyIdx === 0.U){
+
+    //       }.otherwise{
+
+    //       }
+    //       casLatencyIdx := 0.U
+    //       readState := s_idle
+    //     }
+    //   }
+    // }
+  
+    // for(i <- 0 until 4){
+    //   when(casLatencyCnt(i) > 0.U){
+    //     casLatencyCnt(i) := casLatencyCnt(i) - 1.U
+    //   }
+    // }
+    }
+
+
+  // val command = Wire(new Bundle {
+  //   val inhibit=Bool()
+  //   val nop=Bool()
+  //   val active=Bool()
+  //   val read=Bool()
+  //   val write=Bool()
+  //   val burstTerminate=Bool()
+  //   val precharge=Bool()
+  //   val autoRefresh=Bool()
+  //   val loadModeRegister=Bool()
+  // })
+  // withClockAndReset(io.clk.asClock,~io.cke) {
+  //   val dqinValue = WireDefault(0.U(16.W))
+  //   val dqinEn    = WireDefault(false.B)
+  //   val dqi = TriStateInBuf(io.dq, dqinValue, dqinEn) // change this if you need
+
+  //   command.inhibit := io.cs
+  //   command.nop     := ~io.cs &&  io.ras && io.cas && io.we
+  //   command.active  := ~io.cs && !io.ras && io.cas && io.we
+  //   command.read    := ~io.cs &&  io.ras && !io.cas && io.we
+  //   command.write   := ~io.cs &&  io.ras && !io.cas && !io.we 
+  //   command.burstTerminate   := ~io.cs && !io.ras && !io.cas && io.we
+  //   command.precharge        := ~io.cs &&  io.ras && !io.cas && io.we
+  //   command.autoRefresh      := ~io.cs && !io.ras && !io.cas && io.we
+  //   command.loadModeRegister := ~io.cs && !io.ras && !io.cas && !io.we
+  //   val isNop = command.nop || command.inhibit || command.precharge || command.autoRefresh
+  //   val isLoadModeRegister = command.loadModeRegister
+  //   val isRead   = command.read
+  //   val isWrite  = command.write
+  //   val isActive = command.active
+  //   val isburstTerminate = command.burstTerminate
+  //   val sdramRAM = Module(new sdramRAM)
+  //   sdramRAM.io.num := io.num
+
+  //   val ModeRegister = RegInit(0.U.asTypeOf(new sdramOpModeBundle))
+  //   when(isLoadModeRegister){
+  //     ModeRegister := io.a(9,0).asTypeOf(new sdramOpModeBundle)
+  //   }
+  //   //NOTE: 一个Bank容量为8192 * 512 * 16 bit 又因为16bit分为两个写掩码故拆为 8192 * 512 * 8bit
+
+  //   val rowAddrBuff = RegInit(VecInit(Seq.fill(4)(0.U(13.W))))
+  //   // val colAddrBuff = RegInit(0.U(12.W)) //行和列buff
+  //   val bankBuff    = RegInit(0.U(2.W))
+  //   val wdataBuff   = RegInit(0.U(16.W))
+  //   val rowDataBuff = RegInit(VecInit(Seq.fill(4)(0.U.asTypeOf(Vec(1024,UInt(8.W))))))
+  //   val casLatencyCnt = RegInit(0.U(3.W))
+  //   val burstLengthCnt = RegInit(0.U(3.W))
+  //   val requestColReg   = RegInit(0.U(9.W))
+  //   val dqmBuff         = RegInit(0.U(2.W))
+  
+  //   val (s_idle :: s_active :: s_read :: s_write :: Nil )=Enum(4)
+  //   val state = RegInit(s_idle)
+  //   val ReadEn = WireDefault(false.B)
+  //   val colAddr = WireDefault(0.U(9.W))
+  //   sdramRAM.io.clock := io.clk
+  //   sdramRAM.io.valid := state === s_write || state === s_read
+  //   sdramRAM.io.row  := rowAddrBuff(bankBuff)
+  //   sdramRAM.io.col  := colAddr
+  //   sdramRAM.io.wr   := state === s_write
+  //   sdramRAM.io.bank := bankBuff
+  //   sdramRAM.io.din  := wdataBuff
+  //   sdramRAM.io.dqm  := dqmBuff
+
+  //   switch(state){
+  //     is(s_idle){
+  //       when(isActive){
+  //         rowAddrBuff(io.ba) := io.a
+  //         state := s_active
+  //       }
+  //       when(isRead){
+  //         state := s_read
+  //         requestColReg := io.a(8,0)
+  //         bankBuff      := io.ba
+  //         casLatencyCnt := ModeRegister.casLatency - 1.U
+  //         //NOTE:状态机转换本身会消耗一周期，故casLatencyCnt需要减1
+  //       }
+  //       when(isWrite){
+  //         state := s_write
+  //         wdataBuff := dqi
+  //         requestColReg := io.a(8,0)
+  //         bankBuff      := io.ba
+  //         dqmBuff       := io.dqm
+  //       }
+  //     }
+  //     is(s_active){
+  //       // colAddrBuff := io.a(8,0)
+
+  //       when(isRead){
+  //         state := s_read
+  //         requestColReg := io.a(8,0)
+  //         bankBuff      := io.ba
+  //         casLatencyCnt := ModeRegister.casLatency - 1.U
+  //         //NOTE:状态机转换本身会消耗一周期，故casLatencyCnt需要减1
+  //       }
+  //       when(isWrite){
+  //         state := s_write
+  //         wdataBuff := dqi
+  //         requestColReg := io.a(8,0)
+  //         bankBuff      := io.ba
+  //         dqmBuff       := io.dqm
+  //       }
+  //     }
+  //     is(s_read){
+  //       //使用移位寄存器来决定读出数据的延迟和顺序
+  //       when(casLatencyCnt =/= 1.U){
+  //         casLatencyCnt := casLatencyCnt - 1.U
+  //       }
+  //       colAddr := requestColReg + burstLengthCnt
+  //       when(casLatencyCnt === 1.U && burstLengthCnt <= ModeRegister.burstLength + 1.U){
+  //         burstLengthCnt := burstLengthCnt + 1.U
+  //         dqinValue := sdramRAM.io.dout
+  //         dqinEn := true.B
+  //       }
+  //       when(burstLengthCnt === ModeRegister.burstLength + 1.U){ //因为sram性质，访问dpic的结果延迟一拍输出，所以要等延迟一拍的结果
+  //         burstLengthCnt := 0.U
+  //         state := s_idle
+  //       }
+  //     }
+  //     is(s_write){
+  //       when(burstLengthCnt < ModeRegister.burstLength){
+  //         burstLengthCnt := burstLengthCnt + 1.U
+  //       }
+  //       colAddr := requestColReg + burstLengthCnt
+  //       wdataBuff := dqi
+  //       dqmBuff   := io.dqm
+  //       when(burstLengthCnt === ModeRegister.burstLength){
+  //         burstLengthCnt := 0.U
+  //         state := s_idle
+  //       }
+  //     }
+  //   }
+  // }
 }
 
 class sdramChisel extends RawModule { 

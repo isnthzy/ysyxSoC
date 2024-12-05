@@ -23,7 +23,7 @@ class apb_delayer extends BlackBox {
 class APBDelayerChisel(val params: APBBundleParameters) extends Module {
   val io = IO(new APBDelayerIO)
   def R = 5.U
-  val rCnt = RegInit(0.U(32.W))
+  val rCnt = RegInit(0.U(15.W))
   val respBuff = RegInit(0.U.asTypeOf(new Bundle {
     val pready    = Bool()
     val pslverr   = Bool()

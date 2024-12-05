@@ -53,7 +53,10 @@ module sdram_axi
     ,input  [  7:0]  inport_arlen_i
     ,input  [  1:0]  inport_arburst_i
     ,input           inport_rready_i
-    ,input  [ 15:0]  sdram_data_input_i
+    ,input  [ 15:0]  sdram_data_input0_i
+    ,input  [ 15:0]  sdram_data_input1_i
+    ,input  [ 15:0]  sdram_data_input2_i
+    ,input  [ 15:0]  sdram_data_input3_i
 
     // Outputs
     ,output          inport_awready_o
@@ -69,14 +72,14 @@ module sdram_axi
     ,output          inport_rlast_o
     ,output          sdram_clk_o
     ,output          sdram_cke_o
-    ,output          sdram_cs_o
+    ,output [  1:0]  sdram_cs_o
     ,output          sdram_ras_o
     ,output          sdram_cas_o
     ,output          sdram_we_o
-    ,output [  1:0]  sdram_dqm_o
-    ,output [ 12:0]  sdram_addr_o
+    ,output [  3:0]  sdram_dqm_o
+    ,output [ 13:0]  sdram_addr_o
     ,output [  1:0]  sdram_ba_o
-    ,output [ 15:0]  sdram_data_output_o
+    ,output [ 63:0]  sdram_data_output_o
     ,output          sdram_data_out_en_o
 );
 
@@ -186,10 +189,10 @@ u_core
     ,.sdram_ba_o(sdram_ba_o)
     ,.sdram_data_output_o(sdram_data_output_o)
     ,.sdram_data_out_en_o(sdram_data_out_en_o)
-    ,.sdram_data_input0_i(sdram_data_input_i)
-    ,.sdram_data_input1_i(sdram_data_input_i)
-    ,.sdram_data_input2_i(sdram_data_input_i)
-    ,.sdram_data_input3_i(sdram_data_input_i)
+    ,.sdram_data_input0_i(sdram_data_input0_i)
+    ,.sdram_data_input1_i(sdram_data_input1_i)
+    ,.sdram_data_input2_i(sdram_data_input2_i)
+    ,.sdram_data_input3_i(sdram_data_input3_i)
 );
 
 
